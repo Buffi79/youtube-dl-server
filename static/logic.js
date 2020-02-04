@@ -5,6 +5,6 @@ function load() {
 }
 window.onload = load;
 
-function replayButton() {     
+function buttonaction() {     
     document.youdlfrom.submit();
 } 

@@ -14,6 +14,7 @@ import requests
 
 _trackurl = None
 _trackname = None
+_params = None
 
 app = Bottle()
 
@@ -65,8 +66,10 @@ def redirectRoot():
 
 @app.route('/youtube-dl')
 def dl_queue_list():
-    params = {'status': ""}
-    return template('./template/index.tpl', params)
+    global _params
+    speakerlist = ["Bastelzimmer", "Elena", "Dario", "Wohnzimmer", "Bad"]
+    _params = {'title': 'so', 'status': "", 'speakerlist': speakerlist}
+    return template('./template/index.tpl', _params)
 
 @app.route('/youtube-dl/static/:filename#.*#')
 def server_static(filename):
@@ -74,32 +77,41 @@ def server_static(filename):
 
 @app.route('/youtube-dl', method='POST')
 def q_put():
+    global _params
     url = request.forms.get("url")
     speaker = request.forms.get("speaker")
+    _params.update({'url': url, 'speaker': speaker})
+
+    if _trackname is None:
+        if 'replay' in _params:
+            del _params['replay']
+
+    if request.forms.get('buttonaction') == 'refreshspeaker':
+        speakerlist = ["Bastelzimmer", "Elena", "Dario", "Wohnzimmer", "Bad", "Küche", "Garten"]
+        _params.update({'status': "Lautsprecher aktualisiert", 'speaker': "Sonos", 'speakerlist': speakerlist})
+        return template('./template/index.tpl', _params)
+   
+    if request.forms.get('buttonaction') == 'replay':
+           _params.update({'status': "Replay: " + _trackname})
+           callSonos(speaker, _trackurl)
+           return template('./template/index.tpl', _params)
+
+    if not url:
+        _params.update({'status': "URL nicht gesetzt"})
+        return template('./template/index.tpl', _params)
+
+    if not speaker or 'Sonos' in speaker:
+        _params.update({'status': "Lautsprecher nicht gesetzt", 'speaker': "Sonos"})
+        return template('./template/index.tpl', _params)
+
     options = {
         'format': request.forms.get("format"),
         'speaker': speaker
     }
-
-    if (request.forms.get('replay-button') == 'replay'):
-           params = {'status': "Replay: " + _trackname,'url': url, 'speaker': speaker, 'replay': 'yes' }
-           callSonos(speaker, _trackurl)
-           return template('./template/index.tpl', params)
-
-    if not url:
-        params = {'status': "URL nicht gesetzt",
-                  'speaker': speaker }
-        return template('./template/index.tpl', params)
-
-    if not speaker or 'Sonos' in speaker:
-        params = {'status': "Lautsprecher nicht gesetzt",
-                  'url': url }
-        return template('./template/index.tpl', params)
-
     status = download(url, options, speaker)
 
-    params = {'status': status,'url': url, 'speaker': speaker, 'replay': 'yes' }
-    return template('./template/index.tpl', params)
+    _params.update({'status': status, 'replay': 'yes'})
+    return template('./template/index.tpl', _params)
 
 @app.route("/youtube-dl/update", method="GET")
 def update():
