@@ -3,16 +3,17 @@ import json
 import os
 import subprocess
 from queue import Queue
-from bottle import route, run, Bottle, request, static_file, redirect
+from bottle import route, run, Bottle, request, static_file, redirect, view, template
 from threading import Thread
 import youtube_dl
 from pathlib import Path
 from collections import ChainMap
 import urllib.parse
-#import requests
+import requests
 #from requests.utils import requote_uri
 
-_speaker = None
+_trackurl = None
+_trackname = None
 
 app = Bottle()
 
@@ -37,34 +38,26 @@ def callSonos(speaker,trackurl):
 
     print("URL:" + url)
     #url = requote_uri(url)
-    #url = urllib.parse.quote_plus(url)
+    url = urllib.parse.quote_plus(url)
     print("URL(encode):" + url)
 
     #setavtransporturi/http%3A%2F%2F192.168.0.5%3A8455%2F$1
 
-    if speaker is None or mp3File is None:
-        return
+    if speaker is None or trackurl is None:
+        return "Error: Lautsprecher oder URL fehlt"
      
     url = node + "/" +speaker + "/setavtransporturi/" + url
     r = None
-    #r = requests.get(url)
+    r = requests.get(url)
     if r is not None:
-        print ("Sonos API")
-        print (r.status_code)
-        print (r.text)
+        return "Error:" + r.status_code+ ": "+r.text
     else:
-        print ("RESPONSE IS NONE!")
+        return "Error: RESPONSE IS NONE!"
+        #return "OK"
     if r is not None and 200 == r.status_code:
-        result = r.text
-        print (result)
         requests.get(node + "/" +speaker + "/play")
-        return result
-    return None
-
-
-@app.route('/share/:filename#.*#')
-def getmp3(filename):
-    return static_file(filename, root='./share')
+        return "OK"
+    return "Error:"
 
 @app.route('/')
 def redirectRoot():
@@ -72,32 +65,41 @@ def redirectRoot():
 
 @app.route('/youtube-dl')
 def dl_queue_list():
-    return static_file('index.html', root='./')
+    params = {'status': ""}
+    return template('./template/index.tpl', params)
 
 @app.route('/youtube-dl/static/:filename#.*#')
 def server_static(filename):
     return static_file(filename, root='./static')
 
-@app.route('/youtube-dl/q', method='GET')
-def q_size():
-    print ("get")
-    return {"success": True, "size": json.dumps(list(dl_q.queue))}
-
-@app.route('/youtube-dl/q', method='POST')
+@app.route('/youtube-dl', method='POST')
 def q_put():
-    print ("put")
     url = request.forms.get("url")
+    speaker = request.forms.get("speaker")
     options = {
         'format': request.forms.get("format"),
-        'speaker': request.forms.get("speaker")
+        'speaker': speaker
     }
 
-    if not url:
-        return {"success": False, "error": "/q called without a 'url' query param"}
+    if (request.forms.get('replay-button') == 'replay'):
+           params = {'status': "Replay: " + _trackname,'url': url, 'speaker': speaker, 'replay': 'yes' }
+           callSonos(speaker, _trackurl)
+           return template('./template/index.tpl', params)
 
-    dl_q.put((url, options))
-    print("Added url " + url + " to the download queue")
-    return {"success": True, "url": url, "options": options}
+    if not url:
+        params = {'status': "URL nicht gesetzt",
+                  'speaker': speaker }
+        return template('./template/index.tpl', params)
+
+    if not speaker or 'Sonos' in speaker:
+        params = {'status': "Lautsprecher nicht gesetzt",
+                  'url': url }
+        return template('./template/index.tpl', params)
+
+    status = download(url, options, speaker)
+
+    params = {'status': status,'url': url, 'speaker': speaker, 'replay': 'yes' }
+    return template('./template/index.tpl', params)
 
 @app.route("/youtube-dl/update", method="GET")
 def update():
@@ -109,14 +111,6 @@ def update():
         "output": output.decode('ascii'),
         "error":  error.decode('ascii')
     }
-
-def dl_worker():
-    while not done:
-        url, options = dl_q.get()
-        global _speaker 
-        _speaker = options.get('speaker')
-        download(url, options)
-        dl_q.task_done()
 
 def get_ydl_options(request_options):
     request_vars = {
@@ -144,35 +138,32 @@ def my_hook(d):
     if d['status'] == 'finished':
         print("Download Fertig, start Coverting")
 
-def download(url, request_options):
+def download(url, request_options, speaker):
     with youtube_dl.YoutubeDL(get_ydl_options(request_options)) as ydl:
         info = ydl.extract_info(url, download=True)
+        global _trackurl
+        global _trackname
         trackurl = None
         if info.get('requested_formats') is not None:
             for f in info['requested_formats']:
                 if 'audio' in f['format']:
                     trackurl = f['url'] + f.get('play_path', '')
 
+        _trackurl = trackurl
         if trackurl is not None:
             songname = info.get('title', None)
+            _trackname = songname
             id  = info.get('id', None)
-            sonosTh = Thread(target=callSonos, args = (_speaker, trackurl))
-            sonosTh.start()
-
-dl_q = Queue()
-done = False
-dl_thread = Thread(target=dl_worker)
-dl_thread.start()
+            status = callSonos(speaker, trackurl)
+            if 'OK' == status:
+                return "Playing: " +songname
+            return status
 
 print("Updating youtube-dl to the newest version")
 updateResult = update()
 print(updateResult["output"])
 print(updateResult["error"])
 
-print("Started download thread")
-
 app_vars = ChainMap(os.environ, app_defaults)
-
 app.run(host=app_vars['YDL_SERVER_HOST'], port=app_vars['YDL_SERVER_PORT'], debug=True)
-done = True
-dl_thread.join()
+
