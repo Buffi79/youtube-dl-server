@@ -55,6 +55,20 @@
            </div>
           </div>
 
+          </br></br>
+          <p class="lead">Musikurl Direktplay</p>
+          <div class="input-group">
+            % if defined('directurl'):
+            <input name="directurl" type="directurl" class="form-control" placeholder="URL" aria-label="URL" aria-describedby="button-submit" autofocus value={{url}}>
+            % else:
+            <input name="directurl" type="directurl" class="form-control" placeholder="URL" aria-label="URL" aria-describedby="button-submit" autofocus>
+            % end
+
+            <div class="input-group-append">
+                    <button class="btn btn-secondary" type="submit" name="buttonaction" value="directplay" onclick="return buttonaction()">Play</button>
+                </div>
+          </div>
+
         % if defined('status'):
         <div class="ui-widget">
             <div class="ui-state-error ui-corner-all" style="padding: 0.7em;">

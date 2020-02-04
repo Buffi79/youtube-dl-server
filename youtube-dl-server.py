@@ -50,14 +50,15 @@ def callSonos(speaker,trackurl):
     url = node + "/" +speaker + "/setavtransporturi/" + url
     r = None
     r = requests.get(url)
-    if r is not None:
+    if r is None:
+        return "Error: RESPONSE IS NONE!"
         return "Error:" + r.status_code+ ": "+r.text
+    elif r is not None and 200 == r.status_code:
+        requests.get(node + "/" +speaker + "/play")
+        return "OK"
     else:
         return "Error: RESPONSE IS NONE!"
         #return "OK"
-    if r is not None and 200 == r.status_code:
-        requests.get(node + "/" +speaker + "/play")
-        return "OK"
     return "Error:"
 
 @app.route('/')
@@ -80,21 +81,29 @@ def q_put():
     global _params
     url = request.forms.get("url")
     speaker = request.forms.get("speaker")
-    _params.update({'url': url, 'speaker': speaker})
 
     if _trackname is None:
         if 'replay' in _params:
             del _params['replay']
 
+    if request.forms.get('buttonaction') == 'directplay':
+        directurl = request.forms.get("directurl")
+        callSonos(speaker, directurl)
+        return template('./template/index.tpl', _params)
+
+        #if 'url' in _params:
+    #    _params.update({'url': url})
+    #if 'speaker' in _params:
+    #    _params.update({'speaker': speaker})
+    
     if request.forms.get('buttonaction') == 'refreshspeaker':
         speakerlist = ["Bastelzimmer", "Elena", "Dario", "Wohnzimmer", "Bad", "Küche", "Garten"]
         _params.update({'status': "Lautsprecher aktualisiert", 'speaker': "Sonos", 'speakerlist': speakerlist})
         return template('./template/index.tpl', _params)
-   
+
     if request.forms.get('buttonaction') == 'replay':
-           _params.update({'status': "Replay: " + _trackname})
-           callSonos(speaker, _trackurl)
-           return template('./template/index.tpl', _params)
+        callSonos(speaker, directurl)
+        return template('./template/index.tpl', _params)
 
     if not url:
         _params.update({'status': "URL nicht gesetzt"})
