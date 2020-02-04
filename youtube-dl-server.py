@@ -10,7 +10,7 @@ from pathlib import Path
 from collections import ChainMap
 import urllib.parse
 import requests
-#from requests.utils import requote_uri
+
 
 _trackurl = None
 _trackname = None
@@ -23,22 +23,25 @@ app_defaults = {
     'YDL_EXTRACT_AUDIO_FORMAT':'mp3',
     'YDL_EXTRACT_AUDIO_QUALITY': '192',
     'YDL_RECODE_VIDEO_FORMAT': None,
-    'YDL_OUTPUT_TEMPLATE': './youtube-dl/%(title)s.%(ext)s',
+    'YDL_OUTPUT_TEMPLATE': './share/converted',
     'YDL_ARCHIVE_FILE': None,
     'YDL_SERVER_HOST': '0.0.0.0',
     'YDL_SERVER_PORT': 8080,
     'YDL_SONOS_API': 'http://192.168.0.5:5005',
+    'YDL_SONOS_SHARE': 'http://192.168.0.5:8667'
 }
 
-def callSonos(speaker,trackurl):
+def callSonos(speaker, trackurl, local = False):
     ydl_vars = ChainMap(os.environ, app_defaults)
     node = ydl_vars['YDL_SONOS_API']
     
     url = "x-rincon-mp3radio://"
-    url = url + trackurl
+    if local:
+        url = url + ydl_vars['YDL_SONOS_SHARE'] + "/" + trackurl
+    else:
+        url = url + trackurl
 
     print("URL:" + url)
-    #url = requote_uri(url)
     url = urllib.parse.quote_plus(url)
     print("URL(encode):" + url)
 
@@ -58,7 +61,6 @@ def callSonos(speaker,trackurl):
         return "OK"
     else:
         return "Error: RESPONSE IS NONE!"
-        #return "OK"
     return "Error:"
 
 @app.route('/')
@@ -81,6 +83,7 @@ def q_put():
     global _params
     url = request.forms.get("url")
     speaker = request.forms.get("speaker")
+    _params.update({'speaker': speaker})
 
     if _trackname is None:
         if 'replay' in _params:
@@ -93,8 +96,7 @@ def q_put():
 
         #if 'url' in _params:
     #    _params.update({'url': url})
-    #if 'speaker' in _params:
-    #    _params.update({'speaker': speaker})
+
     
     if request.forms.get('buttonaction') == 'refreshspeaker':
         speakerlist = ["Bastelzimmer", "Elena", "Dario", "Wohnzimmer", "Bad", "Küche", "Garten"]
@@ -133,15 +135,30 @@ def update():
         "error":  error.decode('ascii')
     }
 
-def get_ydl_options(request_options):
+def get_ydl_options(request_options, convert = False):
     request_vars = {
-        'YDL_EXTRACT_AUDIO_FORMAT': None,
-        'YDL_RECODE_VIDEO_FORMAT': None,
+        'YDL_EXTRACT_AUDIO_FORMAT': None
     }
     requested_format = request_options.get('format', 'bestvideo')
     request_vars['YDL_EXTRACT_AUDIO_FORMAT'] = 'best'
     ydl_vars = ChainMap(request_vars, os.environ, app_defaults)
 
+    postprocessors = []
+    if convert:
+        if(ydl_vars['YDL_EXTRACT_AUDIO_FORMAT']):
+            postprocessors.append({
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': ydl_vars['YDL_EXTRACT_AUDIO_QUALITY'],
+            })
+        return {
+            'format': ydl_vars['YDL_FORMAT'],
+            'postprocessors': postprocessors,
+            'outtmpl': ydl_vars['YDL_OUTPUT_TEMPLATE'],
+            'download_archive': ydl_vars['YDL_ARCHIVE_FILE'],
+            'restrictfilenames': 'true', #gets rid of spaces in output name
+            'progress_hooks': [my_hook]
+    }
 
     #https://salsa.debian.org/debian/youtube-dl/blob/532a08904ffbacc5e5ccf99edb660c5f37ddb213/youtube_dl/YoutubeDL.py
 
@@ -149,10 +166,8 @@ def get_ydl_options(request_options):
         'format': ydl_vars['YDL_FORMAT'],
         'outtmpl': ydl_vars['YDL_OUTPUT_TEMPLATE'],
         'download_archive': ydl_vars['YDL_ARCHIVE_FILE'],
-        'restrictfilenames': 'true', #gets rid of spaces in output name
         'simulate': 'true',
         'forceurl': 'true',
-        'progress_hooks': [my_hook]
     }
 
 def my_hook(d):
@@ -160,25 +175,33 @@ def my_hook(d):
         print("Download Fertig, start Coverting")
 
 def download(url, request_options, speaker):
+    global _trackurl
+    global _trackname
     with youtube_dl.YoutubeDL(get_ydl_options(request_options)) as ydl:
         info = ydl.extract_info(url, download=True)
-        global _trackurl
-        global _trackname
-        trackurl = None
+
         if info.get('requested_formats') is not None:
             for f in info['requested_formats']:
                 if 'audio' in f['format']:
-                    trackurl = f['url'] + f.get('play_path', '')
-
-        _trackurl = trackurl
-        if trackurl is not None:
-            songname = info.get('title', None)
-            _trackname = songname
-            id  = info.get('id', None)
-            status = callSonos(speaker, trackurl)
-            if 'OK' == status:
-                return "Playing: " +songname
-            return status
+                    if f['format'] == 'mp4':
+                        _trackurl = f['url'] + f.get('play_path', '')
+                        _trackname = info.get('title', None)
+                        id  = info.get('id', None)
+                        status = callSonos(speaker, trackurl)
+                        if 'OK' == status:
+                            return "Playing: " +_trackname
+                        return status
+                        
+    #mp4 is not supported by Sonos -> download & convert
+    with youtube_dl.YoutubeDL(get_ydl_options(request_options, True)) as ydl:
+        info = ydl.extract_info(url, download=True)
+        ydl.prepare_filename(info)
+        _trackname = info.get('title', None)
+        print (_trackname)
+        status = callSonos(speaker, trackurl, True)
+        if 'OK' == status:
+            return "Playing: " +_trackname
+        return status
 
 print("Updating youtube-dl to the newest version")
 updateResult = update()
